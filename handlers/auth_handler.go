@@ -1,0 +1,137 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/agroconnect/service-order/models"
+	"github.com/agroconnect/service-order/repository"
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
+)
+
+type AuthHandler struct {
+	userRepo  repository.UserRepository
+	jwtSecret string
+}
+
+func NewAuthHandler(userRepo repository.UserRepository, jwtSecret string) *AuthHandler {
+	return &AuthHandler{
+		userRepo:  userRepo,
+		jwtSecret: jwtSecret,
+	}
+}
+
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	var dto models.RegisterDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request payload format"})
+		return
+	}
+
+	if dto.Name == "" || dto.Email == "" || len(dto.Password) < 6 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Validation failed: Name, valid Email, and Password (min 6 chars) are required"})
+		return
+	}
+
+	if dto.Role != "admin" && dto.Role != "farmer" && dto.Role != "buyer" {
+		dto.Role = "buyer"
+	}
+
+	existing, _ := h.userRepo.FindByEmail(r.Context(), dto.Email)
+	if existing != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Email is already registered"})
+		return
+	}
+
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(dto.Password), 10)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to encrypt credentials"})
+		return
+	}
+
+	user := models.User{
+		Name:         dto.Name,
+		Email:        dto.Email,
+		PasswordHash: string(hashedBytes),
+		Role:         dto.Role,
+	}
+
+	if err := h.userRepo.CreateUser(r.Context(), &user); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "User registered successfully",
+		"user": map[string]interface{}{
+			"id":    user.ID,
+			"name":  user.Name,
+			"email": user.Email,
+			"role":  user.Role,
+		},
+	})
+}
+
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var dto models.LoginDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request payload format"})
+		return
+	}
+
+	user, err := h.userRepo.FindByEmail(r.Context(), dto.Email)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid email or password"})
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(dto.Password)); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid email or password"})
+		return
+	}
+
+	claims := jwt.MapClaims{
+		"sub":   user.ID,
+		"name":  user.Name,
+		"email": user.Email,
+		"role":  user.Role,
+		"exp":   time.Now().Add(24 * time.Hour).Unix(),
+		"iat":   time.Now().Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(h.jwtSecret))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to issue authentication token"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(models.AuthResponseDTO{
+		Token: tokenString,
+		User:  *user,
+	})
+}

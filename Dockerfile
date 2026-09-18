@@ -5,9 +5,8 @@ WORKDIR /app
 RUN apk add --no-cache git
 
 COPY go.mod ./
-RUN go mod download || true
-
 COPY . .
+RUN go mod tidy
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/service-order main.go
 
 FROM alpine:3.18
