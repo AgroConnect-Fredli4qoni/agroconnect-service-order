@@ -1,0 +1,9 @@
+service-order
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+.env
