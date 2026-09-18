@@ -1,4 +1,3 @@
-# Build stage
 FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
@@ -11,7 +10,6 @@ RUN go mod download || true
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/service-order main.go
 
-# Production stage
 FROM alpine:3.18
 
 RUN apk add --no-cache ca-certificates curl
