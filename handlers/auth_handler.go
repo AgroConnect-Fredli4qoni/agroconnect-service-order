@@ -40,7 +40,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if dto.Role != "admin" && dto.Role != "farmer" && dto.Role != "buyer" {
-		dto.Role = "buyer"
+		dto.Role = "farmer"
 	}
 
 	existing, _ := h.userRepo.FindByEmail(r.Context(), dto.Email)
