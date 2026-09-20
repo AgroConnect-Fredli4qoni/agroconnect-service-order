@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"strconv"
 	"time"
@@ -69,8 +68,8 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	rNumber := rand.Intn(9000) + 1000
-	orderCode := fmt.Sprintf("ORD-%d-%04d", time.Now().Year(), rNumber)
+	nanoSuffix := (time.Now().UnixNano() % 900000) + 100000
+	orderCode := fmt.Sprintf("ORD-%d%02d%02d-%06d", time.Now().Year(), time.Now().Month(), time.Now().Day(), nanoSuffix)
 
 	order := models.Order{
 		OrderCode:       orderCode,
