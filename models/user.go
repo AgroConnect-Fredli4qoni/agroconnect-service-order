@@ -27,3 +27,9 @@ type AuthResponseDTO struct {
 	Token string `json:"token"`
 	User  User   `json:"user"`
 }
+
+type UpdateProfileDTO struct {
+	Name        string `json:"name"`
+	OldPassword string `json:"old_password,omitempty"`
+	NewPassword string `json:"new_password,omitempty"`
+}

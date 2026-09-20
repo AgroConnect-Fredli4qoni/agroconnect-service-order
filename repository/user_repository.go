@@ -12,6 +12,8 @@ type UserRepository interface {
 	CreateUser(ctx context.Context, user *models.User) error
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
 	FindByID(ctx context.Context, id int) (*models.User, error)
+	UpdateUser(ctx context.Context, user *models.User) error
+	UpdatePassword(ctx context.Context, id int, passwordHash string) error
 }
 
 type mysqlUserRepository struct {
@@ -68,4 +70,16 @@ func (r *mysqlUserRepository) FindByID(ctx context.Context, id int) (*models.Use
 	}
 
 	return &u, nil
+}
+
+func (r *mysqlUserRepository) UpdateUser(ctx context.Context, user *models.User) error {
+	query := `UPDATE users SET name = ? WHERE id = ?`
+	_, err := r.db.ExecContext(ctx, query, user.Name, user.ID)
+	return err
+}
+
+func (r *mysqlUserRepository) UpdatePassword(ctx context.Context, id int, passwordHash string) error {
+	query := `UPDATE users SET password_hash = ? WHERE id = ?`
+	_, err := r.db.ExecContext(ctx, query, passwordHash, id)
+	return err
 }

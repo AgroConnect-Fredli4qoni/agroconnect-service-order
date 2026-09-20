@@ -74,6 +74,8 @@ func main() {
 	api := router.PathPrefix("/api").Subrouter()
 	api.HandleFunc("/auth/register", authHandler.Register).Methods("POST")
 	api.HandleFunc("/auth/login", authHandler.Login).Methods("POST")
+	api.HandleFunc("/auth/profile", authHandler.GetProfile).Methods("GET")
+	api.HandleFunc("/auth/profile", authHandler.UpdateProfile).Methods("PUT")
 	api.HandleFunc("/orders", orderHandler.CreateOrder).Methods("POST")
 	api.HandleFunc("/orders/user", orderHandler.GetOrdersByUser).Methods("GET")
 	api.HandleFunc("/orders/{code}", orderHandler.GetOrderByCode).Methods("GET")
