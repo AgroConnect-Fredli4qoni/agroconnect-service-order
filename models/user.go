@@ -8,6 +8,7 @@ type User struct {
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
 	Role         string    `json:"role"`
+	AvatarURL    string    `json:"avatar_url,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
@@ -30,6 +31,7 @@ type AuthResponseDTO struct {
 
 type UpdateProfileDTO struct {
 	Name        string `json:"name"`
+	AvatarURL   string `json:"avatar_url,omitempty"`
 	OldPassword string `json:"old_password,omitempty"`
 	NewPassword string `json:"new_password,omitempty"`
 }

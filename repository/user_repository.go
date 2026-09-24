@@ -41,11 +41,11 @@ func (r *mysqlUserRepository) CreateUser(ctx context.Context, user *models.User)
 }
 
 func (r *mysqlUserRepository) FindByEmail(ctx context.Context, email string) (*models.User, error) {
-	query := `SELECT id, name, email, password_hash, role, created_at FROM users WHERE email = ?`
+	query := `SELECT id, name, email, password_hash, role, COALESCE(avatar_url, ''), created_at FROM users WHERE email = ?`
 	row := r.db.QueryRowContext(ctx, query, email)
 
 	var u models.User
-	err := row.Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.Role, &u.AvatarURL, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("user not found")
@@ -57,11 +57,11 @@ func (r *mysqlUserRepository) FindByEmail(ctx context.Context, email string) (*m
 }
 
 func (r *mysqlUserRepository) FindByID(ctx context.Context, id int) (*models.User, error) {
-	query := `SELECT id, name, email, password_hash, role, created_at FROM users WHERE id = ?`
+	query := `SELECT id, name, email, password_hash, role, COALESCE(avatar_url, ''), created_at FROM users WHERE id = ?`
 	row := r.db.QueryRowContext(ctx, query, id)
 
 	var u models.User
-	err := row.Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.Role, &u.AvatarURL, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("user not found")
@@ -73,8 +73,8 @@ func (r *mysqlUserRepository) FindByID(ctx context.Context, id int) (*models.Use
 }
 
 func (r *mysqlUserRepository) UpdateUser(ctx context.Context, user *models.User) error {
-	query := `UPDATE users SET name = ? WHERE id = ?`
-	_, err := r.db.ExecContext(ctx, query, user.Name, user.ID)
+	query := `UPDATE users SET name = ?, avatar_url = ? WHERE id = ?`
+	_, err := r.db.ExecContext(ctx, query, user.Name, user.AvatarURL, user.ID)
 	return err
 }
 

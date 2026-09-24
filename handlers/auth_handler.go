@@ -216,12 +216,26 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	updated := false
 	if dto.Name != "" && dto.Name != user.Name {
 		user.Name = dto.Name
+		updated = true
+	}
+
+	if dto.AvatarURL != "" {
+		if dto.AvatarURL == "__REMOVE__" {
+			user.AvatarURL = ""
+		} else {
+			user.AvatarURL = dto.AvatarURL
+		}
+		updated = true
+	}
+
+	if updated {
 		if err := h.userRepo.UpdateUser(r.Context(), user); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to update profile name"})
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to update profile"})
 			return
 		}
 	}
