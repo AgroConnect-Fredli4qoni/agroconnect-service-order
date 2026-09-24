@@ -35,3 +35,30 @@ type CreateOrderDTO struct {
 	ShippingAddress string               `json:"shipping_address"`
 	Items           []CreateOrderItemDTO `json:"items"`
 }
+
+type TopProductDTO struct {
+	ProductID     string  `json:"product_id"`
+	ProductName   string  `json:"product_name"`
+	TotalQuantity int     `json:"total_quantity"`
+	TotalRevenue  float64 `json:"total_revenue"`
+}
+
+type StatusCountDTO struct {
+	Status     string  `json:"status"`
+	Count      int     `json:"count"`
+	Percentage float64 `json:"percentage"`
+}
+
+type OrderStatsDTO struct {
+	TotalRevenue      float64          `json:"total_revenue"`
+	TotalOrders       int              `json:"total_orders"`
+	TotalItemsSold    int              `json:"total_items_sold"`
+	AverageOrderValue float64          `json:"average_order_value"`
+	StatusBreakdown   []StatusCountDTO `json:"status_breakdown"`
+	TopProducts       []TopProductDTO  `json:"top_products"`
+	RecentOrders      []Order          `json:"recent_orders"`
+}
+
+type UpdateOrderStatusDTO struct {
+	Status string `json:"status"`
+}

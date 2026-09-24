@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/agroconnect/service-order/models"
@@ -160,4 +161,81 @@ func (h *OrderHandler) GetOrderByCode(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(order)
+}
+
+func (h *OrderHandler) GetOrderStats(w http.ResponseWriter, r *http.Request) {
+	userRole := r.Header.Get("X-User-Role")
+	userIDStr := r.Header.Get("X-User-ID")
+
+	queryUserID := r.URL.Query().Get("user_id")
+	if queryUserID != "" {
+		userIDStr = queryUserID
+	}
+
+	var userID int
+	if userIDStr != "" {
+		if parsed, err := strconv.Atoi(userIDStr); err == nil {
+			userID = parsed
+		}
+	}
+
+	stats, err := h.orderRepo.GetSalesStats(r.Context(), userID, userRole)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(stats)
+}
+
+func (h *OrderHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	code := vars["code"]
+
+	var dto models.UpdateOrderStatusDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request payload format"})
+		return
+	}
+
+	dto.Status = strings.ToUpper(strings.TrimSpace(dto.Status))
+	validStatuses := map[string]bool{
+		"PENDING":   true,
+		"PAID":      true,
+		"SHIPPED":   true,
+		"COMPLETED": true,
+		"CANCELLED": true,
+	}
+
+	if !validStatuses[dto.Status] {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid status value: must be PENDING, PAID, SHIPPED, COMPLETED, or CANCELLED"})
+		return
+	}
+
+	if err := h.orderRepo.UpdateOrderStatus(r.Context(), code, dto.Status); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if err.Error() == "order not found" {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":    "Order status updated successfully",
+		"order_code": code,
+		"status":     dto.Status,
+	})
 }
