@@ -60,12 +60,31 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		subtotal := itemDTO.Price * float64(itemDTO.Quantity)
 		totalAmount += subtotal
 
+		farmerID := itemDTO.FarmerID
+		if farmerID == 0 && h.catalogServiceURL != "" {
+			reqURL := fmt.Sprintf("%s/api/products/%s", h.catalogServiceURL, itemDTO.ProductID)
+			if req, err := http.NewRequestWithContext(r.Context(), "GET", reqURL, nil); err == nil {
+				if resp, err := h.httpClient.Do(req); err == nil {
+					if resp.StatusCode == http.StatusOK {
+						var prod struct {
+							FarmerID int `json:"farmer_id"`
+						}
+						if json.NewDecoder(resp.Body).Decode(&prod) == nil && prod.FarmerID > 0 {
+							farmerID = prod.FarmerID
+						}
+					}
+					resp.Body.Close()
+				}
+			}
+		}
+
 		items = append(items, models.OrderItem{
 			ProductID:   itemDTO.ProductID,
 			ProductName: itemDTO.ProductName,
 			Price:       itemDTO.Price,
 			Quantity:    itemDTO.Quantity,
 			Subtotal:    subtotal,
+			FarmerID:    farmerID,
 		})
 	}
 

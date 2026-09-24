@@ -53,7 +53,7 @@ func (r *mysqlOrderRepository) CreateOrderACID(ctx context.Context, order *model
 	}
 	order.ID = int(orderID)
 
-	itemQuery := `INSERT INTO order_items (order_id, product_id, product_name, price, quantity, subtotal) VALUES (?, ?, ?, ?, ?, ?)`
+	itemQuery := `INSERT INTO order_items (order_id, product_id, product_name, price, quantity, subtotal, farmer_id) VALUES (?, ?, ?, ?, ?, ?, ?)`
 	stmt, err := tx.PrepareContext(ctx, itemQuery)
 	if err != nil {
 		_ = tx.Rollback()
@@ -63,7 +63,7 @@ func (r *mysqlOrderRepository) CreateOrderACID(ctx context.Context, order *model
 
 	for i := range items {
 		items[i].OrderID = order.ID
-		_, err := stmt.ExecContext(ctx, items[i].OrderID, items[i].ProductID, items[i].ProductName, items[i].Price, items[i].Quantity, items[i].Subtotal)
+		_, err := stmt.ExecContext(ctx, items[i].OrderID, items[i].ProductID, items[i].ProductName, items[i].Price, items[i].Quantity, items[i].Subtotal, items[i].FarmerID)
 		if err != nil {
 			_ = tx.Rollback()
 			return err
@@ -100,11 +100,11 @@ func (r *mysqlOrderRepository) FindByUser(ctx context.Context, userID int) ([]mo
 			return nil, err
 		}
 
-		itemRows, err := r.db.QueryContext(ctx, `SELECT id, order_id, product_id, product_name, price, quantity, subtotal FROM order_items WHERE order_id = ?`, o.ID)
+		itemRows, err := r.db.QueryContext(ctx, `SELECT id, order_id, product_id, product_name, price, quantity, subtotal, COALESCE(farmer_id, 0) FROM order_items WHERE order_id = ?`, o.ID)
 		if err == nil {
 			for itemRows.Next() {
 				var it models.OrderItem
-				if err := itemRows.Scan(&it.ID, &it.OrderID, &it.ProductID, &it.ProductName, &it.Price, &it.Quantity, &it.Subtotal); err == nil {
+				if err := itemRows.Scan(&it.ID, &it.OrderID, &it.ProductID, &it.ProductName, &it.Price, &it.Quantity, &it.Subtotal, &it.FarmerID); err == nil {
 					o.Items = append(o.Items, it)
 				}
 			}
@@ -133,11 +133,11 @@ func (r *mysqlOrderRepository) FindByCode(ctx context.Context, code string) (*mo
 		return nil, err
 	}
 
-	itemRows, err := r.db.QueryContext(ctx, `SELECT id, order_id, product_id, product_name, price, quantity, subtotal FROM order_items WHERE order_id = ?`, o.ID)
+	itemRows, err := r.db.QueryContext(ctx, `SELECT id, order_id, product_id, product_name, price, quantity, subtotal, COALESCE(farmer_id, 0) FROM order_items WHERE order_id = ?`, o.ID)
 	if err == nil {
 		for itemRows.Next() {
 			var it models.OrderItem
-			if err := itemRows.Scan(&it.ID, &it.OrderID, &it.ProductID, &it.ProductName, &it.Price, &it.Quantity, &it.Subtotal); err == nil {
+			if err := itemRows.Scan(&it.ID, &it.OrderID, &it.ProductID, &it.ProductName, &it.Price, &it.Quantity, &it.Subtotal, &it.FarmerID); err == nil {
 				o.Items = append(o.Items, it)
 			}
 		}
@@ -165,32 +165,50 @@ func (r *mysqlOrderRepository) GetSalesStats(ctx context.Context, userID int, ro
 	var recentOrdersQuery string
 	var recentOrdersArgs []interface{}
 
-	if role == "buyer" && userID > 0 {
-		revenueQuery = `SELECT COALESCE(SUM(total_amount), 0), COUNT(*), COALESCE(AVG(total_amount), 0) FROM orders WHERE user_id = ?`
+	if role == "farmer" && userID > 0 {
+		revenueQuery = `SELECT COALESCE(SUM(oi.subtotal), 0), COUNT(DISTINCT o.id), COALESCE(AVG(oi.subtotal), 0) FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE oi.farmer_id = ? AND o.status != 'CANCELLED'`
 		revenueArgs = []interface{}{userID}
 
-		itemsQuery = `SELECT COALESCE(SUM(oi.quantity), 0) FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.user_id = ?`
+		itemsQuery = `SELECT COALESCE(SUM(oi.quantity), 0) FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE oi.farmer_id = ? AND o.status != 'CANCELLED'`
+		itemsArgs = []interface{}{userID}
+
+		statusQuery = `SELECT o.status, COUNT(DISTINCT o.id) FROM orders o JOIN order_items oi ON o.id = oi.order_id WHERE oi.farmer_id = ? GROUP BY o.status`
+		statusArgs = []interface{}{userID}
+
+		topProductsQuery = `SELECT oi.product_id, oi.product_name, SUM(oi.quantity) as total_qty, SUM(oi.subtotal) as total_rev FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE oi.farmer_id = ? AND o.status != 'CANCELLED' GROUP BY oi.product_id, oi.product_name ORDER BY total_qty DESC LIMIT 5`
+		topProductsArgs = []interface{}{userID}
+
+		recentOrdersQuery = `SELECT DISTINCT o.id, o.order_code, o.user_id, o.total_amount, o.status, o.shipping_address, o.created_at FROM orders o JOIN order_items oi ON o.id = oi.order_id WHERE oi.farmer_id = ? ORDER BY o.created_at DESC LIMIT 10`
+		recentOrdersArgs = []interface{}{userID}
+	} else if role == "buyer" && userID > 0 {
+		revenueQuery = `SELECT COALESCE(SUM(total_amount), 0), COUNT(*), COALESCE(AVG(total_amount), 0) FROM orders WHERE user_id = ? AND status != 'CANCELLED'`
+		revenueArgs = []interface{}{userID}
+
+		itemsQuery = `SELECT COALESCE(SUM(oi.quantity), 0) FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.user_id = ? AND o.status != 'CANCELLED'`
 		itemsArgs = []interface{}{userID}
 
 		statusQuery = `SELECT status, COUNT(*) FROM orders WHERE user_id = ? GROUP BY status`
 		statusArgs = []interface{}{userID}
 
-		topProductsQuery = `SELECT oi.product_id, oi.product_name, SUM(oi.quantity) as total_qty, SUM(oi.subtotal) as total_rev FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.user_id = ? GROUP BY oi.product_id, oi.product_name ORDER BY total_qty DESC LIMIT 5`
+		topProductsQuery = `SELECT oi.product_id, oi.product_name, SUM(oi.quantity) as total_qty, SUM(oi.subtotal) as total_rev FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.user_id = ? AND o.status != 'CANCELLED' GROUP BY oi.product_id, oi.product_name ORDER BY total_qty DESC LIMIT 5`
 		topProductsArgs = []interface{}{userID}
 
 		recentOrdersQuery = `SELECT id, order_code, user_id, total_amount, status, shipping_address, created_at FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 10`
 		recentOrdersArgs = []interface{}{userID}
 	} else {
-		revenueQuery = `SELECT COALESCE(SUM(total_amount), 0), COUNT(*), COALESCE(AVG(total_amount), 0) FROM orders`
-		itemsQuery = `SELECT COALESCE(SUM(quantity), 0) FROM order_items`
+		revenueQuery = `SELECT COALESCE(SUM(total_amount), 0), COUNT(*), COALESCE(AVG(total_amount), 0) FROM orders WHERE status != 'CANCELLED'`
+		itemsQuery = `SELECT COALESCE(SUM(quantity), 0) FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.status != 'CANCELLED'`
 		statusQuery = `SELECT status, COUNT(*) FROM orders GROUP BY status`
-		topProductsQuery = `SELECT product_id, product_name, SUM(quantity) as total_qty, SUM(subtotal) as total_rev FROM order_items GROUP BY product_id, product_name ORDER BY total_qty DESC LIMIT 5`
+		topProductsQuery = `SELECT oi.product_id, oi.product_name, SUM(oi.quantity) as total_qty, SUM(oi.subtotal) as total_rev FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.status != 'CANCELLED' GROUP BY oi.product_id, oi.product_name ORDER BY total_qty DESC LIMIT 5`
 		recentOrdersQuery = `SELECT id, order_code, user_id, total_amount, status, shipping_address, created_at FROM orders ORDER BY created_at DESC LIMIT 10`
 	}
 
 	row := r.db.QueryRowContext(ctx, revenueQuery, revenueArgs...)
 	if err := row.Scan(&stats.TotalRevenue, &stats.TotalOrders, &stats.AverageOrderValue); err != nil {
 		return nil, err
+	}
+	if stats.TotalOrders > 0 {
+		stats.AverageOrderValue = stats.TotalRevenue / float64(stats.TotalOrders)
 	}
 
 	itemsRow := r.db.QueryRowContext(ctx, itemsQuery, itemsArgs...)
@@ -229,16 +247,35 @@ func (r *mysqlOrderRepository) GetSalesStats(ctx context.Context, userID int, ro
 		for recentRows.Next() {
 			var o models.Order
 			if err := recentRows.Scan(&o.ID, &o.OrderCode, &o.UserID, &o.TotalAmount, &o.Status, &o.ShippingAddress, &o.CreatedAt); err == nil {
-				itemRows, err := r.db.QueryContext(ctx, `SELECT id, order_id, product_id, product_name, price, quantity, subtotal FROM order_items WHERE order_id = ?`, o.ID)
+				var itemQuery string
+				var itemArgs []interface{}
+				if role == "farmer" && userID > 0 {
+					itemQuery = `SELECT id, order_id, product_id, product_name, price, quantity, subtotal, COALESCE(farmer_id, 0) FROM order_items WHERE order_id = ? AND farmer_id = ?`
+					itemArgs = []interface{}{o.ID, userID}
+				} else {
+					itemQuery = `SELECT id, order_id, product_id, product_name, price, quantity, subtotal, COALESCE(farmer_id, 0) FROM order_items WHERE order_id = ?`
+					itemArgs = []interface{}{o.ID}
+				}
+
+				itemRows, err := r.db.QueryContext(ctx, itemQuery, itemArgs...)
 				if err == nil {
 					for itemRows.Next() {
 						var it models.OrderItem
-						if err := itemRows.Scan(&it.ID, &it.OrderID, &it.ProductID, &it.ProductName, &it.Price, &it.Quantity, &it.Subtotal); err == nil {
+						if err := itemRows.Scan(&it.ID, &it.OrderID, &it.ProductID, &it.ProductName, &it.Price, &it.Quantity, &it.Subtotal, &it.FarmerID); err == nil {
 							o.Items = append(o.Items, it)
 						}
 					}
 					itemRows.Close()
 				}
+
+				if role == "farmer" && userID > 0 {
+					var farmerTotal float64
+					for _, it := range o.Items {
+						farmerTotal += it.Subtotal
+					}
+					o.TotalAmount = farmerTotal
+				}
+
 				stats.RecentOrders = append(stats.RecentOrders, o)
 			}
 		}
@@ -248,19 +285,15 @@ func (r *mysqlOrderRepository) GetSalesStats(ctx context.Context, userID int, ro
 }
 
 func (r *mysqlOrderRepository) UpdateOrderStatus(ctx context.Context, code string, status string) error {
-	res, err := r.db.ExecContext(ctx, `UPDATE orders SET status = ? WHERE order_code = ?`, status, code)
+	var count int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM orders WHERE order_code = ?`, code).Scan(&count)
 	if err != nil {
 		return err
 	}
-
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if affected == 0 {
+	if count == 0 {
 		return errors.New("order not found")
 	}
 
-	return nil
+	_, err = r.db.ExecContext(ctx, `UPDATE orders SET status = ? WHERE order_code = ?`, status, code)
+	return err
 }

@@ -10,6 +10,7 @@ type OrderItem struct {
 	Price       float64 `json:"price"`
 	Quantity    int     `json:"quantity"`
 	Subtotal    float64 `json:"subtotal"`
+	FarmerID    int     `json:"farmer_id,omitempty"`
 }
 
 type Order struct {
@@ -28,6 +29,7 @@ type CreateOrderItemDTO struct {
 	ProductName string  `json:"product_name"`
 	Price       float64 `json:"price"`
 	Quantity    int     `json:"quantity"`
+	FarmerID    int     `json:"farmer_id,omitempty"`
 }
 
 type CreateOrderDTO struct {
