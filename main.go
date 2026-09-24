@@ -77,6 +77,7 @@ func main() {
 	api.HandleFunc("/auth/profile", authHandler.GetProfile).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.UpdateProfile).Methods("PUT")
 	api.HandleFunc("/orders", orderHandler.CreateOrder).Methods("POST")
+	api.HandleFunc("/orders", orderHandler.GetOrdersByUser).Methods("GET")
 	api.HandleFunc("/orders/stats", orderHandler.GetOrderStats).Methods("GET")
 	api.HandleFunc("/orders/user", orderHandler.GetOrdersByUser).Methods("GET")
 	api.HandleFunc("/orders/{code}/status", orderHandler.UpdateOrderStatus).Methods("PATCH", "PUT")

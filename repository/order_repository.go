@@ -13,6 +13,7 @@ type StockDeductorFunc func(ctx context.Context, productID string, quantity int)
 type OrderRepository interface {
 	CreateOrderACID(ctx context.Context, order *models.Order, items []models.OrderItem, deductor StockDeductorFunc) error
 	FindByUser(ctx context.Context, userID int) ([]models.Order, error)
+	FindOrdersByRole(ctx context.Context, userID int, role string, statusFilter string) ([]models.Order, error)
 	FindByCode(ctx context.Context, code string) (*models.Order, error)
 	GetSalesStats(ctx context.Context, userID int, role string) (*models.OrderStatsDTO, error)
 	UpdateOrderStatus(ctx context.Context, code string, status string) error
@@ -86,8 +87,48 @@ func (r *mysqlOrderRepository) CreateOrderACID(ctx context.Context, order *model
 }
 
 func (r *mysqlOrderRepository) FindByUser(ctx context.Context, userID int) ([]models.Order, error) {
-	query := `SELECT id, order_code, user_id, total_amount, status, shipping_address, created_at FROM orders WHERE user_id = ? ORDER BY created_at DESC`
-	rows, err := r.db.QueryContext(ctx, query, userID)
+	return r.FindOrdersByRole(ctx, userID, "buyer", "")
+}
+
+func (r *mysqlOrderRepository) FindOrdersByRole(ctx context.Context, userID int, role string, statusFilter string) ([]models.Order, error) {
+	var query string
+	var args []interface{}
+
+	if role == "farmer" && userID > 0 {
+		query = `SELECT DISTINCT o.id, o.order_code, o.user_id, COALESCE(u.name, ''), COALESCE(u.email, ''), o.total_amount, o.status, o.shipping_address, o.created_at
+			FROM orders o
+			JOIN order_items oi ON o.id = oi.order_id
+			LEFT JOIN users u ON o.user_id = u.id
+			WHERE oi.farmer_id = ?`
+		args = append(args, userID)
+		if statusFilter != "" && statusFilter != "ALL" {
+			query += ` AND o.status = ?`
+			args = append(args, statusFilter)
+		}
+		query += ` ORDER BY o.created_at DESC`
+	} else if role == "buyer" && userID > 0 {
+		query = `SELECT o.id, o.order_code, o.user_id, COALESCE(u.name, ''), COALESCE(u.email, ''), o.total_amount, o.status, o.shipping_address, o.created_at
+			FROM orders o
+			LEFT JOIN users u ON o.user_id = u.id
+			WHERE o.user_id = ?`
+		args = append(args, userID)
+		if statusFilter != "" && statusFilter != "ALL" {
+			query += ` AND o.status = ?`
+			args = append(args, statusFilter)
+		}
+		query += ` ORDER BY o.created_at DESC`
+	} else {
+		query = `SELECT o.id, o.order_code, o.user_id, COALESCE(u.name, ''), COALESCE(u.email, ''), o.total_amount, o.status, o.shipping_address, o.created_at
+			FROM orders o
+			LEFT JOIN users u ON o.user_id = u.id`
+		if statusFilter != "" && statusFilter != "ALL" {
+			query += ` WHERE o.status = ?`
+			args = append(args, statusFilter)
+		}
+		query += ` ORDER BY o.created_at DESC`
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -96,11 +137,21 @@ func (r *mysqlOrderRepository) FindByUser(ctx context.Context, userID int) ([]mo
 	var orders []models.Order
 	for rows.Next() {
 		var o models.Order
-		if err := rows.Scan(&o.ID, &o.OrderCode, &o.UserID, &o.TotalAmount, &o.Status, &o.ShippingAddress, &o.CreatedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.OrderCode, &o.UserID, &o.CustomerName, &o.CustomerEmail, &o.TotalAmount, &o.Status, &o.ShippingAddress, &o.CreatedAt); err != nil {
 			return nil, err
 		}
 
-		itemRows, err := r.db.QueryContext(ctx, `SELECT id, order_id, product_id, product_name, price, quantity, subtotal, COALESCE(farmer_id, 0) FROM order_items WHERE order_id = ?`, o.ID)
+		var itemQuery string
+		var itemArgs []interface{}
+		if role == "farmer" && userID > 0 {
+			itemQuery = `SELECT id, order_id, product_id, product_name, price, quantity, subtotal, COALESCE(farmer_id, 0) FROM order_items WHERE order_id = ? AND farmer_id = ?`
+			itemArgs = []interface{}{o.ID, userID}
+		} else {
+			itemQuery = `SELECT id, order_id, product_id, product_name, price, quantity, subtotal, COALESCE(farmer_id, 0) FROM order_items WHERE order_id = ?`
+			itemArgs = []interface{}{o.ID}
+		}
+
+		itemRows, err := r.db.QueryContext(ctx, itemQuery, itemArgs...)
 		if err == nil {
 			for itemRows.Next() {
 				var it models.OrderItem
@@ -109,6 +160,14 @@ func (r *mysqlOrderRepository) FindByUser(ctx context.Context, userID int) ([]mo
 				}
 			}
 			itemRows.Close()
+		}
+
+		if role == "farmer" && userID > 0 {
+			var farmerTotal float64
+			for _, it := range o.Items {
+				farmerTotal += it.Subtotal
+			}
+			o.TotalAmount = farmerTotal
 		}
 
 		orders = append(orders, o)
@@ -122,11 +181,11 @@ func (r *mysqlOrderRepository) FindByUser(ctx context.Context, userID int) ([]mo
 }
 
 func (r *mysqlOrderRepository) FindByCode(ctx context.Context, code string) (*models.Order, error) {
-	query := `SELECT id, order_code, user_id, total_amount, status, shipping_address, created_at FROM orders WHERE order_code = ?`
+	query := `SELECT o.id, o.order_code, o.user_id, COALESCE(u.name, ''), COALESCE(u.email, ''), o.total_amount, o.status, o.shipping_address, o.created_at FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE o.order_code = ?`
 	row := r.db.QueryRowContext(ctx, query, code)
 
 	var o models.Order
-	if err := row.Scan(&o.ID, &o.OrderCode, &o.UserID, &o.TotalAmount, &o.Status, &o.ShippingAddress, &o.CreatedAt); err != nil {
+	if err := row.Scan(&o.ID, &o.OrderCode, &o.UserID, &o.CustomerName, &o.CustomerEmail, &o.TotalAmount, &o.Status, &o.ShippingAddress, &o.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("order not found")
 		}

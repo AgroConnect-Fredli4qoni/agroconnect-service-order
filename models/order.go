@@ -17,6 +17,8 @@ type Order struct {
 	ID              int         `json:"id"`
 	OrderCode       string      `json:"order_code"`
 	UserID          int         `json:"user_id"`
+	CustomerName    string      `json:"customer_name,omitempty"`
+	CustomerEmail   string      `json:"customer_email,omitempty"`
 	TotalAmount     float64     `json:"total_amount"`
 	Status          string      `json:"status"`
 	ShippingAddress string      `json:"shipping_address"`

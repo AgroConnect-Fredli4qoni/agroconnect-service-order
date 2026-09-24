@@ -139,7 +139,21 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrderHandler) GetOrdersByUser(w http.ResponseWriter, r *http.Request) {
-	userIDStr := r.URL.Query().Get("user_id")
+	userRole := r.Header.Get("X-User-Role")
+	userIDStr := r.Header.Get("X-User-ID")
+
+	queryUserID := r.URL.Query().Get("user_id")
+	if queryUserID != "" {
+		userIDStr = queryUserID
+	}
+
+	queryRole := r.URL.Query().Get("role")
+	if queryRole != "" {
+		userRole = queryRole
+	}
+
+	statusFilter := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("status")))
+
 	if userIDStr == "" {
 		userIDStr = "3"
 	}
@@ -152,7 +166,11 @@ func (h *OrderHandler) GetOrdersByUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orders, err := h.orderRepo.FindByUser(r.Context(), userID)
+	if userRole == "" {
+		userRole = "buyer"
+	}
+
+	orders, err := h.orderRepo.FindOrdersByRole(r.Context(), userID, userRole, statusFilter)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
