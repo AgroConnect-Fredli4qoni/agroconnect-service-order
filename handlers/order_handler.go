@@ -209,6 +209,11 @@ func (h *OrderHandler) GetOrderStats(w http.ResponseWriter, r *http.Request) {
 		userIDStr = queryUserID
 	}
 
+	queryRole := r.URL.Query().Get("role")
+	if queryRole != "" {
+		userRole = queryRole
+	}
+
 	var userID int
 	if userIDStr != "" {
 		if parsed, err := strconv.Atoi(userIDStr); err == nil {
