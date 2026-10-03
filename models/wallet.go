@@ -51,8 +51,30 @@ type UpdateWalletAccountDTO struct {
 	AccountHolder string `json:"account_holder"`
 }
 
-type WalletOverviewDTO struct {
-	Wallet       FarmerWallet        `json:"wallet"`
-	Transactions []WalletTransaction `json:"transactions"`
-	Withdrawals  []WithdrawalRequest `json:"withdrawals"`
+type PayoutAccount struct {
+	ID            int       `json:"id"`
+	FarmerID      int       `json:"farmer_id"`
+	AccountType   string    `json:"account_type"`
+	ProviderName  string    `json:"provider_name"`
+	AccountNumber string    `json:"account_number"`
+	AccountHolder string    `json:"account_holder"`
+	IsPrimary     bool      `json:"is_primary"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
+
+type CreatePayoutAccountDTO struct {
+	AccountType   string `json:"account_type"`
+	ProviderName  string `json:"provider_name"`
+	AccountNumber string `json:"account_number"`
+	AccountHolder string `json:"account_holder"`
+	IsPrimary     bool   `json:"is_primary"`
+}
+
+type WalletOverviewDTO struct {
+	Wallet         FarmerWallet        `json:"wallet"`
+	Transactions   []WalletTransaction `json:"transactions"`
+	Withdrawals    []WithdrawalRequest `json:"withdrawals"`
+	PayoutAccounts []PayoutAccount     `json:"payout_accounts"`
+}
+

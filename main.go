@@ -97,6 +97,10 @@ func main() {
 	api.HandleFunc("/wallet", walletHandler.GetWallet).Methods("GET")
 	api.HandleFunc("/wallet/withdraw", walletHandler.Withdraw).Methods("POST")
 	api.HandleFunc("/wallet/account", walletHandler.UpdateAccount).Methods("PUT")
+	api.HandleFunc("/wallet/payout-accounts", walletHandler.GetPayoutAccounts).Methods("GET")
+	api.HandleFunc("/wallet/payout-accounts", walletHandler.AddPayoutAccount).Methods("POST")
+	api.HandleFunc("/wallet/payout-accounts/{id}/primary", walletHandler.SetPrimaryPayoutAccount).Methods("PUT", "PATCH")
+	api.HandleFunc("/wallet/payout-accounts/{id}", walletHandler.DeletePayoutAccount).Methods("DELETE")
 
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   []string{"*"},

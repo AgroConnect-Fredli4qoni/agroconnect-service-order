@@ -16,6 +16,10 @@ type WalletRepository interface {
 	UpdateWalletAccount(ctx context.Context, farmerID int, dto models.UpdateWalletAccountDTO) error
 	CreditEscrowPending(ctx context.Context, orderID int) error
 	ReleaseEscrowToBalance(ctx context.Context, orderCode string) error
+	GetPayoutAccounts(ctx context.Context, farmerID int) ([]models.PayoutAccount, error)
+	AddPayoutAccount(ctx context.Context, farmerID int, dto models.CreatePayoutAccountDTO) (*models.PayoutAccount, error)
+	SetPrimaryPayoutAccount(ctx context.Context, farmerID int, accountID int) error
+	DeletePayoutAccount(ctx context.Context, farmerID int, accountID int) error
 }
 
 type mysqlWalletRepository struct {
@@ -92,6 +96,19 @@ func (r *mysqlWalletRepository) GetWalletOverview(ctx context.Context, farmerID 
 			var wd models.WithdrawalRequest
 			if scanErr := wdRows.Scan(&wd.ID, &wd.FarmerID, &wd.Amount, &wd.TargetType, &wd.TargetProvider, &wd.TargetAccount, &wd.AccountHolder, &wd.Status, &wd.CreatedAt); scanErr == nil {
 				dto.Withdrawals = append(dto.Withdrawals, wd)
+			}
+		}
+	}
+
+	dto.PayoutAccounts = make([]models.PayoutAccount, 0)
+	pQuery := `SELECT id, farmer_id, account_type, provider_name, account_number, account_holder, is_primary, created_at, updated_at FROM farmer_payout_accounts WHERE farmer_id = ? ORDER BY is_primary DESC, id ASC`
+	pRows, err := r.db.QueryContext(ctx, pQuery, farmerID)
+	if err == nil {
+		defer pRows.Close()
+		for pRows.Next() {
+			var pa models.PayoutAccount
+			if scanErr := pRows.Scan(&pa.ID, &pa.FarmerID, &pa.AccountType, &pa.ProviderName, &pa.AccountNumber, &pa.AccountHolder, &pa.IsPrimary, &pa.CreatedAt, &pa.UpdatedAt); scanErr == nil {
+				dto.PayoutAccounts = append(dto.PayoutAccounts, pa)
 			}
 		}
 	}
@@ -247,3 +264,157 @@ func (r *mysqlWalletRepository) ReleaseEscrowToBalance(ctx context.Context, orde
 
 	return nil
 }
+
+func (r *mysqlWalletRepository) GetPayoutAccounts(ctx context.Context, farmerID int) ([]models.PayoutAccount, error) {
+	query := `SELECT id, farmer_id, account_type, provider_name, account_number, account_holder, is_primary, created_at, updated_at FROM farmer_payout_accounts WHERE farmer_id = ? ORDER BY is_primary DESC, id ASC`
+	rows, err := r.db.QueryContext(ctx, query, farmerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	accounts := make([]models.PayoutAccount, 0)
+	for rows.Next() {
+		var pa models.PayoutAccount
+		if err := rows.Scan(&pa.ID, &pa.FarmerID, &pa.AccountType, &pa.ProviderName, &pa.AccountNumber, &pa.AccountHolder, &pa.IsPrimary, &pa.CreatedAt, &pa.UpdatedAt); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, pa)
+	}
+	return accounts, nil
+}
+
+func (r *mysqlWalletRepository) AddPayoutAccount(ctx context.Context, farmerID int, dto models.CreatePayoutAccountDTO) (*models.PayoutAccount, error) {
+	if dto.ProviderName == "" || dto.AccountNumber == "" || dto.AccountHolder == "" {
+		return nil, errors.New("nama penyedia, nomor rekening/e-wallet, dan nama pemilik wajib diisi")
+	}
+
+	var count int
+	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM farmer_payout_accounts WHERE farmer_id = ?`, farmerID).Scan(&count)
+	if count == 0 {
+		dto.IsPrimary = true
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback()
+			panic(p)
+		}
+	}()
+
+	if dto.IsPrimary {
+		if _, err := tx.ExecContext(ctx, `UPDATE farmer_payout_accounts SET is_primary = 0 WHERE farmer_id = ?`, farmerID); err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+	}
+
+	insertQuery := `INSERT INTO farmer_payout_accounts (farmer_id, account_type, provider_name, account_number, account_holder, is_primary) VALUES (?, ?, ?, ?, ?, ?)`
+	res, err := tx.ExecContext(ctx, insertQuery, farmerID, dto.AccountType, dto.ProviderName, dto.AccountNumber, dto.AccountHolder, dto.IsPrimary)
+	if err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	lastID, _ := res.LastInsertId()
+
+	if dto.IsPrimary {
+		_, _ = tx.ExecContext(ctx, `UPDATE farmer_wallets SET bank_name = ?, account_number = ?, account_holder = ? WHERE farmer_id = ?`, dto.ProviderName, dto.AccountNumber, dto.AccountHolder, farmerID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return &models.PayoutAccount{
+		ID:            int(lastID),
+		FarmerID:      farmerID,
+		AccountType:   dto.AccountType,
+		ProviderName:  dto.ProviderName,
+		AccountNumber: dto.AccountNumber,
+		AccountHolder: dto.AccountHolder,
+		IsPrimary:     dto.IsPrimary,
+	}, nil
+}
+
+func (r *mysqlWalletRepository) SetPrimaryPayoutAccount(ctx context.Context, farmerID int, accountID int) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback()
+			panic(p)
+		}
+	}()
+
+	var providerName, accountNumber, accountHolder string
+	err = tx.QueryRowContext(ctx, `SELECT provider_name, account_number, account_holder FROM farmer_payout_accounts WHERE id = ? AND farmer_id = ?`, accountID, farmerID).Scan(&providerName, &accountNumber, &accountHolder)
+	if err != nil {
+		_ = tx.Rollback()
+		return errors.New("rekening penarikan tidak ditemukan")
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE farmer_payout_accounts SET is_primary = 0 WHERE farmer_id = ?`, farmerID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE farmer_payout_accounts SET is_primary = 1 WHERE id = ? AND farmer_id = ?`, accountID, farmerID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE farmer_wallets SET bank_name = ?, account_number = ?, account_holder = ? WHERE farmer_id = ?`, providerName, accountNumber, accountHolder, farmerID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (r *mysqlWalletRepository) DeletePayoutAccount(ctx context.Context, farmerID int, accountID int) error {
+	var isPrimary bool
+	err := r.db.QueryRowContext(ctx, `SELECT is_primary FROM farmer_payout_accounts WHERE id = ? AND farmer_id = ?`, accountID, farmerID).Scan(&isPrimary)
+	if err != nil {
+		return errors.New("rekening tujuan tidak ditemukan")
+	}
+
+	var count int
+	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM farmer_payout_accounts WHERE farmer_id = ?`, farmerID).Scan(&count)
+	if count <= 1 {
+		return errors.New("rekening utama tidak dapat dihapus jika hanya tersisa satu rekening")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback()
+			panic(p)
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM farmer_payout_accounts WHERE id = ? AND farmer_id = ?`, accountID, farmerID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if isPrimary {
+		var nextID int
+		var nextProvider, nextAccount, nextHolder string
+		if err := tx.QueryRowContext(ctx, `SELECT id, provider_name, account_number, account_holder FROM farmer_payout_accounts WHERE farmer_id = ? ORDER BY id ASC LIMIT 1`, farmerID).Scan(&nextID, &nextProvider, &nextAccount, &nextHolder); err == nil {
+			_, _ = tx.ExecContext(ctx, `UPDATE farmer_payout_accounts SET is_primary = 1 WHERE id = ?`, nextID)
+			_, _ = tx.ExecContext(ctx, `UPDATE farmer_wallets SET bank_name = ?, account_number = ?, account_holder = ? WHERE farmer_id = ?`, nextProvider, nextAccount, nextHolder, farmerID)
+		}
+	}
+
+	return tx.Commit()
+}
+
