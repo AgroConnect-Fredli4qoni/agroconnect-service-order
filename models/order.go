@@ -22,6 +22,11 @@ type Order struct {
 	TotalAmount     float64     `json:"total_amount"`
 	Status          string      `json:"status"`
 	ShippingAddress string      `json:"shipping_address"`
+	SnapToken       string      `json:"snap_token,omitempty"`
+	SnapRedirectURL string      `json:"snap_redirect_url,omitempty"`
+	PaymentType     string      `json:"payment_type,omitempty"`
+	PaymentStatus   string      `json:"payment_status,omitempty"`
+	PaidAt          *time.Time  `json:"paid_at,omitempty"`
 	CreatedAt       time.Time   `json:"created_at"`
 	Items           []OrderItem `json:"items,omitempty"`
 }

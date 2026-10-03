@@ -13,19 +13,22 @@ import (
 
 	"github.com/agroconnect/service-order/models"
 	"github.com/agroconnect/service-order/repository"
+	"github.com/agroconnect/service-order/services"
 	"github.com/gorilla/mux"
 )
 
 type OrderHandler struct {
 	orderRepo         repository.OrderRepository
 	catalogServiceURL string
+	midtransService   services.MidtransService
 	httpClient        *http.Client
 }
 
-func NewOrderHandler(orderRepo repository.OrderRepository, catalogServiceURL string) *OrderHandler {
+func NewOrderHandler(orderRepo repository.OrderRepository, catalogServiceURL string, midtransService services.MidtransService) *OrderHandler {
 	return &OrderHandler{
 		orderRepo:         orderRepo,
 		catalogServiceURL: catalogServiceURL,
+		midtransService:   midtransService,
 		httpClient:        &http.Client{Timeout: 5 * time.Second},
 	}
 }
@@ -131,6 +134,17 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Transaction failed: " + err.Error()})
 		return
+	}
+
+	if h.midtransService != nil {
+		customer := models.MidtransCustomerDetails{
+			FirstName: fmt.Sprintf("Pembeli #%d", order.UserID),
+		}
+		if snapResp, snapErr := h.midtransService.CreateSnapTransaction(r.Context(), &order, items, customer); snapErr == nil && snapResp != nil {
+			order.SnapToken = snapResp.Token
+			order.SnapRedirectURL = snapResp.RedirectURL
+			_ = h.orderRepo.SaveSnapToken(r.Context(), order.OrderCode, snapResp.Token, snapResp.RedirectURL)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

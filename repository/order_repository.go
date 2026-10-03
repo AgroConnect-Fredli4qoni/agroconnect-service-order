@@ -17,14 +17,17 @@ type OrderRepository interface {
 	FindByCode(ctx context.Context, code string) (*models.Order, error)
 	GetSalesStats(ctx context.Context, userID int, role string) (*models.OrderStatsDTO, error)
 	UpdateOrderStatus(ctx context.Context, code string, status string) error
+	SaveSnapToken(ctx context.Context, orderCode, snapToken, redirectURL string) error
+	UpdatePaymentFromWebhook(ctx context.Context, orderCode, paymentType, paymentStatus, transactionStatus string) error
 }
 
 type mysqlOrderRepository struct {
-	db *sql.DB
+	db         *sql.DB
+	walletRepo WalletRepository
 }
 
-func NewOrderRepository(db *sql.DB) OrderRepository {
-	return &mysqlOrderRepository{db: db}
+func NewOrderRepository(db *sql.DB, walletRepo WalletRepository) OrderRepository {
+	return &mysqlOrderRepository{db: db, walletRepo: walletRepo}
 }
 
 func (r *mysqlOrderRepository) CreateOrderACID(ctx context.Context, order *models.Order, items []models.OrderItem, deductor StockDeductorFunc) error {
@@ -354,5 +357,48 @@ func (r *mysqlOrderRepository) UpdateOrderStatus(ctx context.Context, code strin
 	}
 
 	_, err = r.db.ExecContext(ctx, `UPDATE orders SET status = ? WHERE order_code = ?`, status, code)
+	if err != nil {
+		return err
+	}
+
+	if status == "COMPLETED" && r.walletRepo != nil {
+		_ = r.walletRepo.ReleaseEscrowToBalance(ctx, code)
+	}
+
+	return nil
+}
+
+func (r *mysqlOrderRepository) SaveSnapToken(ctx context.Context, orderCode, snapToken, redirectURL string) error {
+	query := `UPDATE orders SET snap_token = ?, snap_redirect_url = ? WHERE order_code = ?`
+	_, err := r.db.ExecContext(ctx, query, snapToken, redirectURL, orderCode)
 	return err
+}
+
+func (r *mysqlOrderRepository) UpdatePaymentFromWebhook(ctx context.Context, orderCode, paymentType, paymentStatus, transactionStatus string) error {
+	var orderID int
+	var currentStatus string
+	err := r.db.QueryRowContext(ctx, `SELECT id, status FROM orders WHERE order_code = ?`, orderCode).Scan(&orderID, &currentStatus)
+	if err != nil {
+		return err
+	}
+
+	if transactionStatus == "settlement" || transactionStatus == "capture" {
+		query := `UPDATE orders SET status = 'PAID', payment_status = 'PAID', payment_type = ?, paid_at = NOW() WHERE id = ?`
+		if _, execErr := r.db.ExecContext(ctx, query, paymentType, orderID); execErr != nil {
+			return execErr
+		}
+		if r.walletRepo != nil {
+			_ = r.walletRepo.CreditEscrowPending(ctx, orderID)
+		}
+	} else if transactionStatus == "expire" || transactionStatus == "cancel" || transactionStatus == "deny" {
+		query := `UPDATE orders SET status = 'CANCELLED', payment_status = 'CANCELLED' WHERE id = ?`
+		if _, execErr := r.db.ExecContext(ctx, query, orderID); execErr != nil {
+			return execErr
+		}
+	} else if transactionStatus == "pending" {
+		query := `UPDATE orders SET payment_status = 'PENDING', payment_type = ? WHERE id = ?`
+		_, _ = r.db.ExecContext(ctx, query, paymentType, orderID)
+	}
+
+	return nil
 }

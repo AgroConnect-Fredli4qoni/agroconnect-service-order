@@ -10,6 +10,7 @@ import (
 
 	"github.com/agroconnect/service-order/handlers"
 	"github.com/agroconnect/service-order/repository"
+	"github.com/agroconnect/service-order/services"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	"github.com/rs/cors"
@@ -36,6 +37,10 @@ func main() {
 		jwtSecret = "agroconnect_super_secure_jwt_secret_key_2026"
 	}
 
+	midtransServerKey := os.Getenv("MIDTRANS_SERVER_KEY")
+	midtransClientKey := os.Getenv("MIDTRANS_CLIENT_KEY")
+	isMidtransProd := os.Getenv("MIDTRANS_IS_PRODUCTION") == "true"
+
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Fatalf("Failed to initialize MySQL driver: %v", err)
@@ -52,11 +57,16 @@ func main() {
 		log.Println("Successfully connected to MySQL database")
 	}
 
+	midtransService := services.NewMidtransService(midtransServerKey, midtransClientKey, isMidtransProd)
+
 	userRepo := repository.NewUserRepository(db)
-	orderRepo := repository.NewOrderRepository(db)
+	walletRepo := repository.NewWalletRepository(db)
+	orderRepo := repository.NewOrderRepository(db, walletRepo)
 
 	authHandler := handlers.NewAuthHandler(userRepo, jwtSecret)
-	orderHandler := handlers.NewOrderHandler(orderRepo, catalogURL)
+	orderHandler := handlers.NewOrderHandler(orderRepo, catalogURL, midtransService)
+	walletHandler := handlers.NewWalletHandler(walletRepo)
+	paymentHandler := handlers.NewPaymentHandler(orderRepo, midtransService)
 
 	router := mux.NewRouter()
 
@@ -76,12 +86,17 @@ func main() {
 	api.HandleFunc("/auth/login", authHandler.Login).Methods("POST")
 	api.HandleFunc("/auth/profile", authHandler.GetProfile).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.UpdateProfile).Methods("PUT")
+	api.HandleFunc("/orders/webhook/midtrans", paymentHandler.HandleMidtransWebhook).Methods("POST")
+	api.HandleFunc("/orders/{code}/snap-token", paymentHandler.GetOrderSnapToken).Methods("GET", "POST")
 	api.HandleFunc("/orders", orderHandler.CreateOrder).Methods("POST")
 	api.HandleFunc("/orders", orderHandler.GetOrdersByUser).Methods("GET")
 	api.HandleFunc("/orders/stats", orderHandler.GetOrderStats).Methods("GET")
 	api.HandleFunc("/orders/user", orderHandler.GetOrdersByUser).Methods("GET")
 	api.HandleFunc("/orders/{code}/status", orderHandler.UpdateOrderStatus).Methods("PATCH", "PUT")
 	api.HandleFunc("/orders/{code}", orderHandler.GetOrderByCode).Methods("GET")
+	api.HandleFunc("/wallet", walletHandler.GetWallet).Methods("GET")
+	api.HandleFunc("/wallet/withdraw", walletHandler.Withdraw).Methods("POST")
+	api.HandleFunc("/wallet/account", walletHandler.UpdateAccount).Methods("PUT")
 
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   []string{"*"},
