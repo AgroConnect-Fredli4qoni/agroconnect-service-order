@@ -62,11 +62,13 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	walletRepo := repository.NewWalletRepository(db)
 	orderRepo := repository.NewOrderRepository(db, walletRepo)
+	adminRepo := repository.NewMySQLAdminRepository(db)
 
 	authHandler := handlers.NewAuthHandler(userRepo, jwtSecret)
 	orderHandler := handlers.NewOrderHandler(orderRepo, catalogURL, midtransService)
 	walletHandler := handlers.NewWalletHandler(walletRepo)
 	paymentHandler := handlers.NewPaymentHandler(orderRepo, midtransService)
+	adminHandler := handlers.NewAdminHandler(adminRepo)
 
 	router := mux.NewRouter()
 
@@ -101,6 +103,11 @@ func main() {
 	api.HandleFunc("/wallet/payout-accounts", walletHandler.AddPayoutAccount).Methods("POST")
 	api.HandleFunc("/wallet/payout-accounts/{id}/primary", walletHandler.SetPrimaryPayoutAccount).Methods("PUT", "PATCH")
 	api.HandleFunc("/wallet/payout-accounts/{id}", walletHandler.DeletePayoutAccount).Methods("DELETE")
+	api.HandleFunc("/admin/stats", adminHandler.GetAdminStats).Methods("GET")
+	api.HandleFunc("/admin/users", adminHandler.GetAdminUsers).Methods("GET")
+	api.HandleFunc("/admin/orders", adminHandler.GetAdminOrders).Methods("GET")
+	api.HandleFunc("/admin/withdrawals", adminHandler.GetAdminWithdrawals).Methods("GET")
+	api.HandleFunc("/admin/withdrawals/{id}/status", adminHandler.UpdateWithdrawalStatus).Methods("PATCH", "PUT")
 
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   []string{"*"},
