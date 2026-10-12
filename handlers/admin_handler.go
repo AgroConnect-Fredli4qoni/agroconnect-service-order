@@ -136,7 +136,7 @@ func (h *AdminHandler) UpdateWithdrawalStatus(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := h.adminRepo.UpdateWithdrawalStatus(r.Context(), id, dto.Status); err != nil {
+	if err := h.adminRepo.UpdateWithdrawalStatus(r.Context(), id, dto.Status, dto.AdminNotes); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

@@ -14,7 +14,7 @@ type AdminRepository interface {
 	FindAllUsers(ctx context.Context, roleFilter, search string) ([]models.AdminUserDTO, error)
 	FindAllOrdersAdmin(ctx context.Context, statusFilter, search string) ([]models.Order, error)
 	FindAllWithdrawalsAdmin(ctx context.Context, statusFilter string) ([]models.AdminWithdrawalItemDTO, error)
-	UpdateWithdrawalStatus(ctx context.Context, id int, status string) error
+	UpdateWithdrawalStatus(ctx context.Context, id int, status, notes string) error
 }
 
 type mysqlAdminRepository struct {
@@ -68,9 +68,25 @@ func (r *mysqlAdminRepository) GetPlatformAdminStats(ctx context.Context) (*mode
 					sc.Percentage = float64(int((float64(sc.Count)/float64(stats.TotalOrders))*1000)) / 10.0
 				}
 				stats.StatusBreakdown = append(stats.StatusBreakdown, sc)
+
+				switch strings.ToUpper(sc.Status) {
+				case "PENDING":
+					stats.PendingOrders = sc.Count
+				case "PAID":
+					stats.PaidOrders = sc.Count
+				case "SHIPPED":
+					stats.ShippedOrders = sc.Count
+				case "COMPLETED":
+					stats.CompletedOrders = sc.Count
+				case "CANCELLED":
+					stats.CancelledOrders = sc.Count
+				}
 			}
 		}
 	}
+
+	wdStatsQuery := `SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM withdrawal_requests WHERE LOWER(status) = 'pending'`
+	_ = r.db.QueryRowContext(ctx, wdStatsQuery).Scan(&stats.PendingWithdrawalsCount, &stats.PendingWithdrawalsAmount)
 
 	topProductsQuery := `SELECT oi.product_id, oi.product_name, SUM(oi.quantity) as total_qty, SUM(oi.subtotal) as total_rev FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.status != 'CANCELLED' GROUP BY oi.product_id, oi.product_name ORDER BY total_qty DESC LIMIT 5`
 	topRows, err := r.db.QueryContext(ctx, topProductsQuery)
@@ -128,6 +144,8 @@ func (r *mysqlAdminRepository) FindAllUsers(ctx context.Context, roleFilter, sea
 		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Role, &u.AvatarURL, &u.CreatedAt, &u.OrderCount, &u.TotalVolume); err != nil {
 			return nil, err
 		}
+		u.TotalOrders = u.OrderCount
+		u.TotalSpent = u.TotalVolume
 		users = append(users, u)
 	}
 
@@ -183,12 +201,12 @@ func (r *mysqlAdminRepository) FindAllOrdersAdmin(ctx context.Context, statusFil
 }
 
 func (r *mysqlAdminRepository) FindAllWithdrawalsAdmin(ctx context.Context, statusFilter string) ([]models.AdminWithdrawalItemDTO, error) {
-	query := `SELECT w.id, w.farmer_id, COALESCE(u.name, 'Petani'), COALESCE(u.email, ''), w.amount, w.target_type, w.target_provider, w.target_account, w.account_holder, w.status, w.created_at FROM withdrawal_requests w LEFT JOIN users u ON w.farmer_id = u.id WHERE 1=1`
+	query := `SELECT w.id, w.farmer_id, COALESCE(u.name, 'Petani'), COALESCE(u.email, ''), w.amount, w.target_type, w.target_provider, w.target_account, w.account_holder, w.status, COALESCE(w.admin_notes, ''), w.created_at FROM withdrawal_requests w LEFT JOIN users u ON w.farmer_id = u.id WHERE 1=1`
 	var args []interface{}
 
 	if statusFilter != "" && statusFilter != "all" {
-		query += ` AND w.status = ?`
-		args = append(args, statusFilter)
+		query += ` AND LOWER(w.status) = ?`
+		args = append(args, strings.ToLower(statusFilter))
 	}
 
 	query += ` ORDER BY w.created_at DESC LIMIT 100`
@@ -202,17 +220,26 @@ func (r *mysqlAdminRepository) FindAllWithdrawalsAdmin(ctx context.Context, stat
 	withdrawals := make([]models.AdminWithdrawalItemDTO, 0)
 	for rows.Next() {
 		var w models.AdminWithdrawalItemDTO
-		if err := rows.Scan(&w.ID, &w.FarmerID, &w.FarmerName, &w.FarmerEmail, &w.Amount, &w.TargetType, &w.TargetProvider, &w.TargetAccount, &w.AccountHolder, &w.Status, &w.CreatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &w.FarmerID, &w.FarmerName, &w.FarmerEmail, &w.Amount, &w.TargetType, &w.TargetProvider, &w.TargetAccount, &w.AccountHolder, &w.Status, &w.AdminNotes, &w.CreatedAt); err != nil {
 			return nil, err
 		}
+		w.BankName = w.TargetProvider
+		w.AccountNumber = w.TargetAccount
+		w.Status = strings.ToUpper(w.Status)
 		withdrawals = append(withdrawals, w)
 	}
 
 	return withdrawals, nil
 }
 
-func (r *mysqlAdminRepository) UpdateWithdrawalStatus(ctx context.Context, id int, status string) error {
-	res, err := r.db.ExecContext(ctx, `UPDATE withdrawal_requests SET status = ? WHERE id = ?`, status, id)
+func (r *mysqlAdminRepository) UpdateWithdrawalStatus(ctx context.Context, id int, status, notes string) error {
+	var res sql.Result
+	var err error
+	if notes != "" {
+		res, err = r.db.ExecContext(ctx, `UPDATE withdrawal_requests SET status = ?, admin_notes = ? WHERE id = ?`, status, notes, id)
+	} else {
+		res, err = r.db.ExecContext(ctx, `UPDATE withdrawal_requests SET status = ? WHERE id = ?`, status, id)
+	}
 	if err != nil {
 		return err
 	}
@@ -221,7 +248,7 @@ func (r *mysqlAdminRepository) UpdateWithdrawalStatus(ctx context.Context, id in
 		return err
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("withdrawal not found")
+		return fmt.Errorf("withdrawal request not found")
 	}
 	return nil
 }
